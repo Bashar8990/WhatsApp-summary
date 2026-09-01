@@ -22,6 +22,9 @@ const NO_SENDER_PATTERN = new RegExp(
   'i',
 );
 
+// نمط "اسم: نص" بدون تاريخ (عند النسخ المباشر من واتساب)
+const SENDER_ONLY_PATTERN = /^([^:\n[\]]{1,50}):\s(.+)$/;
+
 // كشف رسائل النظام الشائعة
 const SYSTEM_KEYWORDS = [
   'أضاف',
@@ -55,6 +58,11 @@ const SYSTEM_KEYWORDS = [
   'created',
   'security code',
   'messages are end-to-end encrypted',
+  'تم إنشاء مجموعة',
+  'غير اسم المجموعة',
+  'أضافك',
+  'انضمام',
+  'مغادرة',
 ];
 
 function isSystemContent(text: string): boolean {
@@ -64,20 +72,17 @@ function isSystemContent(text: string): boolean {
 
 function normalizeTimestamp(dateRaw: string, timeRaw: string): string | null {
   try {
-    // محاولة بناء تاريخ ISO من الأجزاء
     const dateParts = dateRaw.split(/[/\\.-]/).map((p) => p.trim());
     if (dateParts.length !== 3) return null;
     let [a, b, year] = dateParts;
     let day: number;
     let month: number;
-    // افتراض DD/MM/YYYY (الصيغة العربية/الأوروبية الشائعة)
     day = parseInt(a, 10);
     month = parseInt(b, 10);
     if (year.length === 2) year = `20${year}`;
     const yr = parseInt(year, 10);
     if (isNaN(day) || isNaN(month) || isNaN(yr)) return null;
     if (month > 12 && day <= 12) {
-      // ربما MM/DD/YYYY
       [day, month] = [month, day];
     }
     let time = timeRaw.trim();
@@ -117,6 +122,12 @@ export type ParseResult = {
   warnings: string[];
 };
 
+// يكتشف إن كانت المحادثة تحتوي على تواريخ (صيغة التصدير الكامل)
+function hasTimestamps(input: string): boolean {
+  const sample = input.slice(0, 2000);
+  return new RegExp(`(?:\\[)?${DATE_PART}[,\\s]`).test(sample);
+}
+
 export function parseWhatsAppChat(input: string): ParseResult {
   idCounter = 0;
   const warnings: string[] = [];
@@ -124,6 +135,8 @@ export function parseWhatsAppChat(input: string): ParseResult {
   const messages: WhatsAppMessage[] = [];
   let unparsedLines = 0;
   let current: WhatsAppMessage | null = null;
+
+  const withTimestamps = hasTimestamps(input);
 
   const flushCurrent = () => {
     if (current) {
@@ -138,11 +151,11 @@ export function parseWhatsAppChat(input: string): ParseResult {
   for (const rawLine of lines) {
     const line = rawLine.replace(/\u200f|\u200e/g, '').trimEnd();
     if (line.trim().length === 0) {
-      // سطر فارغ قد يكون فاصل داخل رسالة متعددة الأسطر
       if (current) current.content += '\n';
       continue;
     }
 
+    // 1) نمط التصدير الكامل: تاريخ + وقت + مرسل + نص
     const mainMatch = line.match(MAIN_PATTERN);
     if (mainMatch) {
       flushCurrent();
@@ -160,6 +173,7 @@ export function parseWhatsAppChat(input: string): ParseResult {
       continue;
     }
 
+    // 2) نمط التصدير بدون مرسل (رسائل النظام)
     const noSenderMatch = line.match(NO_SENDER_PATTERN);
     if (noSenderMatch) {
       flushCurrent();
@@ -176,13 +190,46 @@ export function parseWhatsAppChat(input: string): ParseResult {
       continue;
     }
 
-    // سطر استمرار لرسالة سابقة متعددة الأسطر
+    // 3) نمط النسخ المباشر: "اسم: نص" بدون تواريخ
+    if (!withTimestamps) {
+      const senderMatch = line.match(SENDER_ONLY_PATTERN);
+      if (senderMatch) {
+        flushCurrent();
+        const [, senderRaw, contentRaw] = senderMatch;
+        const sender = senderRaw.trim();
+        const isSystem = isSystemContent(contentRaw) || isSystemContent(sender);
+        current = {
+          id: nextId(),
+          sender,
+          timestamp: null,
+          rawDate: null,
+          content: contentRaw.trim(),
+          isSystemMessage: isSystem,
+        };
+        continue;
+      }
+    }
+
+    // 4) سطر استمرار لرسالة سابقة متعددة الأسطر
     if (current) {
       current.content += '\n' + line.trim();
       continue;
     }
 
-    // سطر لا يطابق أي نمط وليس جزءًا من رسالة
+    // 5) احتياط أخير: إذا لم تكن هناك تواريخ أصلًا، اعتبر كل سطر رسالة مستقلة
+    if (!withTimestamps) {
+      current = {
+        id: nextId(),
+        sender: null,
+        timestamp: null,
+        rawDate: null,
+        content: line.trim(),
+        isSystemMessage: isSystemContent(line),
+      };
+      flushCurrent();
+      continue;
+    }
+
     unparsedLines += 1;
   }
 
@@ -192,15 +239,23 @@ export function parseWhatsAppChat(input: string): ParseResult {
     warnings.push(
       'لم يتم التعرف على صيغة محادثة واتساب. تأكد من لصق المحادثة بصيغة التصدير القياسية.',
     );
-  } else if (unparsedLines > messages.length * 0.3) {
+  } else if (unparsedLines > messages.length * 0.3 && withTimestamps) {
     warnings.push('بعض الأسطر لم يتم التعرف عليها وقد تكون خارج الصيغة القياسية.');
+  }
+
+  if (!withTimestamps && messages.length > 0) {
+    warnings.push(
+      'لم يتم العثور على تواريخ في المحادثة. تمت المعالجة بدون تواريخ — قد تكون قد نسخت النص مباشرة من واتساب. للحصول على تحليل أدق، استخدم "تصدير المحادثة" من واتساب.',
+    );
   }
 
   return { messages, unparsedLines, warnings };
 }
 
 export function estimateMessageCount(text: string): number {
-  // تقدير سريع بعدد الأسطر التي تبدأ بنمط تاريخ
-  const matches = text.match(new RegExp(`(?:\\[)?${DATE_PART}[,\\s]`, 'g'));
-  return matches ? matches.length : 0;
+  const tsMatches = text.match(new RegExp(`(?:\\[)?${DATE_PART}[,\\s]`, 'g'));
+  if (tsMatches && tsMatches.length > 0) return tsMatches.length;
+  // تقدير بعدد الأسطر غير الفارغة إن لم توجد تواريخ
+  const nonEmpty = text.split('\n').filter((l) => l.trim().length > 0).length;
+  return nonEmpty;
 }
