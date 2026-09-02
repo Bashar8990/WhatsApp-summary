@@ -4,10 +4,12 @@ import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
+// عند النشر على GitHub Pages تحت مسار فرعي، نحتاج لضبط base.
+// محليًا نستخدم '/'، وعلى GitHub Pages نستخدم '/WhatsApp-summary/'.
+const base = process.env.GITHUB_ACTIONS ? '/WhatsApp-summary/' : '/'
+
 export default defineConfig({
-  // عند النشر على GitHub Pages تحت مسار فرعي، نحتاج لضبط base.
-  // محليًا نستخدم '/'، وعلى GitHub Pages نستخدم '/WhatsApp-summary/'.
-  base: process.env.GITHUB_ACTIONS ? '/WhatsApp-summary/' : '/',
+  base,
   plugins: [
     react(),
     tailwindcss(),
@@ -20,7 +22,9 @@ export default defineConfig({
         description: 'حلّل محادثات واتساب محليًا داخل جهازك',
         lang: 'ar',
         dir: 'rtl',
-        start_url: '/',
+        // start_url يجب أن يتطابق مع base لتفادي 404 عند فتح التطبيق المثبّت
+        start_url: base,
+        scope: base,
         display: 'standalone',
         background_color: '#0f172a',
         theme_color: '#0f172a',
@@ -33,7 +37,7 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
-        navigateFallback: '/index.html',
+        navigateFallback: `${base}index.html`,
         // ملفات مكتبة WebLLM الكبيرة تُحمّل عند الطلب وتُخزّن وقت التشغيل
         globIgnores: ['**/lib-*.js'],
         runtimeCaching: [
