@@ -21,28 +21,34 @@ import { orchestrateAnalysis } from './services/analysis/orchestrator';
 import { parseWhatsAppChat } from './services/parser/whatsappParser';
 import { getDeviceCompatibility } from './services/ai/deviceCheck';
 import { isModelLoaded, regenerateSummary } from './services/ai/webllmService';
-import { getAnalysis, saveAnalysis } from './services/storage/indexedDB';
+import {
+  getAnalysis,
+  saveAnalysis,
+  saveCurrentSessionMessages,
+  loadCurrentSessionMessages,
+  clearCurrentSessionMessages,
+} from './services/storage/indexedDB';
 import { makeTitle } from './utils/export';
 import type { AnalysisResult, AnalysisType, SavedAnalysis, SummaryLength, WhatsAppMessage } from './types';
 
 // مفاتيح sessionStorage لحفظ النتيجة الحالية (تبقى صفحة Results بعد التحديث)
+// result و messageCount صغيران نسبيًا فيُخزّنان في sessionStorage (متزامن وسريع).
+// الرسائل الأصلية قد تكون ضخمة فتُخزّن في IndexedDB (يتسع لأكثر من 5MB بكثير).
 const SESSION_RESULT_KEY = 'current-result';
 const SESSION_MSG_COUNT_KEY = 'current-message-count';
-const SESSION_MESSAGES_KEY = 'current-messages';
 
 function storeCurrentResult(result: AnalysisResult, messageCount: number, messages?: WhatsAppMessage[]) {
   try {
     sessionStorage.setItem(SESSION_RESULT_KEY, JSON.stringify(result));
     sessionStorage.setItem(SESSION_MSG_COUNT_KEY, String(messageCount));
-    // حفظ الرسائل الأصلية لإتاحة إعادة توليد الملخص بعد التحديث
-    // (قد تتجاوز السعة للمحادثات الضخمة — يُتجاهل بصمت)
-    if (messages) {
-      sessionStorage.setItem(SESSION_MESSAGES_KEY, JSON.stringify(messages));
-    } else {
-      sessionStorage.removeItem(SESSION_MESSAGES_KEY);
-    }
   } catch {
     /* ignore — قد تتجاوز السعة */
+  }
+  // حفظ الرسائل الأصلية في IndexedDB (غير متزامن، لا يرمي هنا)
+  if (messages) {
+    void saveCurrentSessionMessages(messages).catch(() => { /* ignore */ });
+  } else {
+    void clearCurrentSessionMessages().catch(() => { /* ignore */ });
   }
 }
 
@@ -50,22 +56,20 @@ function clearCurrentResult() {
   try {
     sessionStorage.removeItem(SESSION_RESULT_KEY);
     sessionStorage.removeItem(SESSION_MSG_COUNT_KEY);
-    sessionStorage.removeItem(SESSION_MESSAGES_KEY);
   } catch {
     /* ignore */
   }
+  void clearCurrentSessionMessages().catch(() => { /* ignore */ });
 }
 
-function loadCurrentResult(): { result: AnalysisResult; messageCount: number; messages: WhatsAppMessage[] } | null {
+function loadCurrentResult(): { result: AnalysisResult; messageCount: number } | null {
   try {
     const r = sessionStorage.getItem(SESSION_RESULT_KEY);
     const m = sessionStorage.getItem(SESSION_MSG_COUNT_KEY);
-    const msgs = sessionStorage.getItem(SESSION_MESSAGES_KEY);
     if (r && m) {
       return {
         result: JSON.parse(r) as AnalysisResult,
         messageCount: parseInt(m, 10),
-        messages: msgs ? (JSON.parse(msgs) as WhatsAppMessage[]) : [],
       };
     }
   } catch {
@@ -81,10 +85,36 @@ export default function App() {
   const { route, navigate } = useHashRoute();
 
   // استعادة النتيجة من sessionStorage عند بدء التشغيل (لإبقاء Results بعد التحديث)
-  const [result, setResult] = useState<AnalysisResult | null>(() => loadCurrentResult()?.result ?? null);
-  const [messageCount, setMessageCount] = useState<number>(() => loadCurrentResult()?.messageCount ?? 0);
-  // الرسائل الأصلية المُحلّلة — تُحفظ لإتاحة إعادة توليد الملخص من المحادثة (لا من الملخص)
-  const [messages, setMessages] = useState<WhatsAppMessage[]>(() => loadCurrentResult()?.messages ?? []);
+  // استدعاء واحد فقط (بدل 3) لتفادي parse مكلف للمحادثات الكبيرة
+  const [restored] = useState(() => loadCurrentResult());
+  const [result, setResult] = useState<AnalysisResult | null>(() => restored?.result ?? null);
+  const [messageCount, setMessageCount] = useState<number>(() => restored?.messageCount ?? 0);
+  // الرسائل الأصلية المُحلّلة — تُحفظ في IndexedDB (لا sessionStorage) لإتاحة إعادة توليد الملخص
+  // تُحمّل بشكل غير متزامن بعد التهيئة (IndexedDB غير متزامن)
+  const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
+  const [messagesLoaded, setMessagesLoaded] = useState(false);
+
+  // تحميل الرسائل الأصلية من IndexedDB عند بدء التشغيل
+  useEffect(() => {
+    if (!restored) {
+      setMessagesLoaded(true);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const msgs = await loadCurrentSessionMessages();
+        if (!cancelled) {
+          setMessages(msgs ?? []);
+        }
+      } catch {
+        /* ignore */
+      } finally {
+        if (!cancelled) setMessagesLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [restored]);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ progress: number; stage: string } | null>(null);
   const [showModelDialog, setShowModelDialog] = useState(false);
@@ -141,7 +171,7 @@ export default function App() {
       const controller = new AbortController();
       abortRef.current = controller;
       try {
-        const parsed = parseWhatsAppChat(text);
+        const parsed = parseWhatsAppChat(text, { dateFormat: settings.dateFormat });
         if (parsed.messages.length === 0) {
           toasts.error('لم يتم التعثور على رسائل بصيغة واتساب. تحقق من الصيغة.');
           setBusy(false);
@@ -154,6 +184,14 @@ export default function App() {
         const wantAI =
           settings.processingMode === 'local-ai' ||
           (settings.processingMode === 'auto' && compat.webgpu);
+
+        // إن اختار المستخدم الذكاء الاصطناعي صراحةً لكن WebGPU غير متوفر والنموذج غير محمّل،
+        // أبلغه فورًا بأن اختياره سيتجاوز، مع إتاحة المتابعة بالتحليل البرمجي.
+        if (settings.processingMode === 'local-ai' && !compat.webgpu && !isModelLoaded()) {
+          toasts.warning(
+            'وضع الذكاء الاصطناعي المحلي غير مدعوم على هذا الجهاز (WebGPU غير متوفر). سيُستخدم التحليل البرمجي السريع.',
+          );
+        }
 
         if (wantAI && !isModelLoaded() && compat.webgpu) {
           // اعرض نافذة تحميل النموذج
@@ -179,7 +217,8 @@ export default function App() {
         storeCurrentResult(filtered, parsed.messages.length, parsed.messages);
         navigate('results');
         if (settings.autoSave) {
-          await persistResult(res, parsed.messages.length, settings.userName);
+          // نحفظ النسخة المُصفّاة (المُعروضة) لضمان اتساق ما يراه المستخدم مع ما يُحفظ
+          await persistResult(filtered, parsed.messages.length, settings.userName);
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') {
@@ -240,25 +279,20 @@ export default function App() {
   };
 
   const handleRegenerate = async (length: SummaryLength): Promise<string> => {
-    if (!result) return '';
+    if (!result) throw new Error('لا توجد نتيجة لإعادة التوليد.');
+    // الرسائل تُحمّل من IndexedDB بشكل غير متزامن — انتظر حتى تكتمل
+    if (!messagesLoaded) {
+      throw new Error('جاري تحميل المحادثة الأصلية، حاول مرة أخرى بعد لحظات.');
+    }
     // إعادة التوليد تتطلب الرسائل الأصلية (لا الملخص) لإنتاج ملخص من المحادثة نفسها
     if (messages.length === 0) {
-      toasts.warning('لا تتوفر المحادثة الأصلية لإعادة التوليد. افتح نتيجة من تحليل جديد.');
-      return result.summary;
+      throw new Error('لا تتوفر المحادثة الأصلية لإعادة التوليد. افتح نتيجة من تحليل جديد.');
     }
-    if (isModelLoaded()) {
-      try {
-        const newSummary = await regenerateSummary(
-          messages,
-          settings.userName,
-          length,
-        );
-        return newSummary;
-      } catch {
-        return result.summary;
-      }
+    if (!isModelLoaded()) {
+      throw new Error('النموذج غير محمّل. حمّل النموذج أولًا لإعادة التوليد.');
     }
-    return result.summary;
+    // regenerateSummary تُرجع الملخص الجديد، أو ترمي خطأً عند الفشل
+    return await regenerateSummary(messages, settings.userName, length);
   };
 
   const openSaved = (a: SavedAnalysis) => {
@@ -344,6 +378,7 @@ export default function App() {
             busy={busy}
             processingMode={settings.processingMode}
             toasts={toasts}
+            compat={compat}
           />
         )}
         {loadingSaved && <ResultsSkeleton />}
@@ -405,6 +440,7 @@ export default function App() {
         onLoaded={() => void handleModelLoaded()}
         onUseFast={handleUseFast}
         toasts={toasts}
+        modelId={settings.modelId}
       />
 
       {confirmSave && (

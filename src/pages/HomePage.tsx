@@ -4,7 +4,7 @@ import { Card } from '../components/Card';
 import { Icon } from '../components/Icon';
 import { Logo } from '../components/Logo';
 import { estimateMessageCount } from '../services/parser/whatsappParser';
-import type { AnalysisType, ProcessingMode } from '../types';
+import type { AnalysisType, DeviceCompatibility, ProcessingMode } from '../types';
 import type { ToastApi } from '../hooks/useToast';
 
 type Props = {
@@ -14,6 +14,7 @@ type Props = {
   busy: boolean;
   processingMode: ProcessingMode;
   toasts: ToastApi;
+  compat: DeviceCompatibility;
 };
 
 const ANALYSIS_TYPES: { value: AnalysisType; label: string }[] = [
@@ -38,6 +39,7 @@ export function HomePage({
   busy,
   processingMode,
   toasts,
+  compat,
 }: Props) {
   const [text, setText] = useState('');
   const [analysisType, setAnalysisType] = useState<AnalysisType>('full');
@@ -105,6 +107,29 @@ export function HomePage({
           محادثتك لا تغادر جهازك
         </div>
       </header>
+
+      {/* بطاقة توافق المتصفح — تُظهر للمستخدم ما إذا كان التحليل الذكي متاحًا */}
+      {!compat.webgpu && (
+        <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+          <Icon name="info" size={18} className="mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium">التحليل الذكي المحلي غير متاح على هذا المتصفح</p>
+            <p className="mt-1 text-xs">{compat.label}</p>
+            <p className="mt-1 text-xs">
+              يمكنك استخدام <strong>التحليل السريع</strong> (برمجي) بدون الحاجة لـ WebGPU — يعمل على كل المتصفحات.
+            </p>
+          </div>
+        </div>
+      )}
+      {compat.webgpu && compat.status === 'slow' && (
+        <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+          <Icon name="info" size={18} className="mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium">قد يكون التحليل الذكي بطيئًا على هذا الجهاز</p>
+            <p className="mt-1 text-xs">{compat.label}</p>
+          </div>
+        </div>
+      )}
 
       <Card className="space-y-4">
         <div>

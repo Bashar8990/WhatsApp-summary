@@ -1,9 +1,11 @@
 import { Button } from '../components/Button';
 import { Icon } from '../components/Icon';
+import { getDeviceCompatibility } from '../services/ai/deviceCheck';
 
 type Props = { onBack: () => void };
 
 export function PrivacyPage({ onBack }: Props) {
+  const compat = getDeviceCompatibility();
   return (
     <div className="mx-auto max-w-2xl px-4 py-6">
       <div className="mb-4 flex items-center justify-between">
@@ -29,6 +31,18 @@ export function PrivacyPage({ onBack }: Props) {
         <p className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200">
           لا يستخدم التطبيق أي خدمات تحليلات أو تتبع خارجية. لا يُسجّل نص المحادثات في console في وضع الإنتاج.
         </p>
+
+        <div className="mt-4 rounded-xl border border-slate-200 p-3 text-sm dark:border-slate-700">
+          <h3 className="mb-2 font-semibold text-slate-800 dark:text-slate-200">توافق المتصفح</h3>
+          <ul className="list-disc space-y-1 pr-6 text-xs">
+            <li><strong>التحليل الذكي المحلي</strong> (WebGPU): يتطلب Chrome أو Edge حديثًا على سطح المكتب.</li>
+            <li><strong>التحليل السريع</strong> (برمجي): يعمل على كل المتصفحات بما فيها Firefox و Safari.</li>
+            <li>iOS Safari: بدأ دعم WebGPU في iOS 18+ لكنه قد لا يكون مفعّلًا افتراضيًا.</li>
+          </ul>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            حالة جهازك: {compat.label}
+          </p>
+        </div>
       </div>
     </div>
   );

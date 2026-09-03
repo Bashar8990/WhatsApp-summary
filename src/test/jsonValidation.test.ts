@@ -17,6 +17,20 @@ describe('jsonValidation', () => {
     expect(tryFixJson('[1,2,]')).toBe('[1,2]');
   });
 
+  it('preserves https URLs inside string values while stripping line comments', () => {
+    const input = '{"url":"https://example.com/path","a":1 // comment\n}';
+    const fixed = tryFixJson(input);
+    expect(fixed).toContain('https://example.com/path');
+    expect(fixed).not.toContain('comment');
+    // يجب أن يكون JSON صالحًا بعد الإصلاح
+    expect(() => JSON.parse(fixed)).not.toThrow();
+    expect(JSON.parse(fixed).url).toBe('https://example.com/path');
+  });
+
+  it('strips line comments outside strings', () => {
+    expect(tryFixJson('{"a":1 // comment\n}')).toBe('{"a":1 \n}');
+  });
+
   it('parses valid analysis and applies defaults', () => {
     const raw = '{"summary":"ملخص","tasksForMe":[{"task":"مهمة"}]}';
     const res = parseAndValidateAnalysis(raw);

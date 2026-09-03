@@ -75,6 +75,11 @@ export function ResultsPage({
     saveDoneTasks(doneTasks);
   }, [doneTasks]);
 
+  // مزامنة الملخص المعروض عند تغيّر result (تحليل جديد على نفس الصفحة)
+  useEffect(() => {
+    setSummary(result.summary);
+  }, [result]);
+
   const toggleDone = (id: string) => {
     setDoneTasks((prev) => {
       const next = new Set(prev);
@@ -85,10 +90,13 @@ export function ResultsPage({
   };
 
   const handleCopyAll = async () => {
-    const ok = await copyToClipboard(formatResultAsText({ ...result, summary }));
+    const ok = await copyToClipboard(formatResultAsText(resultWithSummary()));
     if (ok) toasts.success('تم نسخ كل النتائج');
     else toasts.error('تعذّر النسخ');
   };
+
+  // النتيجة مع الملخص المُعاد توليده (للنسخ والتصدير)
+  const resultWithSummary = (): AnalysisResult => ({ ...result, summary });
 
   const handleCopySection = async (text: string, label: string) => {
     const ok = await copyToClipboard(text);
@@ -100,10 +108,16 @@ export function ResultsPage({
     setRegenerating(true);
     try {
       const newSummary = await onRegenerate(summaryLength);
+      const changed = newSummary.trim() !== summary.trim();
       setSummary(newSummary);
-      toasts.success('تم إعادة توليد الملخص');
-    } catch {
-      toasts.error('تعذّر إعادة توليد الملخص');
+      if (changed) {
+        toasts.success('تم إعادة توليد الملخص');
+      } else {
+        toasts.info('لم يتغيّر الملخص عن النسخة الحالية');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'تعذّر إعادة توليد الملخص';
+      toasts.error(msg);
     } finally {
       setRegenerating(false);
     }
@@ -223,8 +237,8 @@ export function ResultsPage({
                   className="absolute left-0 z-50 mt-1 min-w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
                 >
                   <MenuItem onClick={() => { setMenuOpen(false); handleCopyAll(); }} icon="copy" label="نسخ الكل" />
-                  <MenuItem onClick={() => { setMenuOpen(false); exportAsTxt(result, `ملخص_${messageCount}رسالة`); }} icon="download" label="تصدير TXT" />
-                  <MenuItem onClick={() => { setMenuOpen(false); exportAsJson(result, `ملخص_${messageCount}رسالة`); }} icon="download" label="تصدير JSON" />
+                  <MenuItem onClick={() => { setMenuOpen(false); exportAsTxt(resultWithSummary(), `ملخص_${messageCount}رسالة`); }} icon="download" label="تصدير TXT" />
+                  <MenuItem onClick={() => { setMenuOpen(false); exportAsJson(resultWithSummary(), `ملخص_${messageCount}رسالة`); }} icon="download" label="تصدير JSON" />
                   <MenuItem onClick={() => { setMenuOpen(false); onSave(); }} icon="save" label="حفظ النتيجة" />
                   <div className="my-1 h-px bg-slate-200 dark:bg-slate-700" />
                   <MenuItem onClick={() => { setMenuOpen(false); onClear(); }} icon="trash" label="مسح" danger />

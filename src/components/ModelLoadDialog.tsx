@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button } from './Button';
 import { Modal } from './Modal';
-import { MODEL_CONFIG } from '../config/model';
+import { getModelConfig } from '../config/model';
 import { loadModel } from '../services/ai/webllmService';
 import type { ModelLoadProgress } from '../types';
 import type { ToastApi } from '../hooks/useToast';
@@ -12,28 +12,42 @@ type Props = {
   onLoaded: () => void;
   onUseFast: () => void;
   toasts: ToastApi;
+  modelId?: string;
 };
 
-export function ModelLoadDialog({ open, onClose, onLoaded, onUseFast, toasts }: Props) {
+export function ModelLoadDialog({ open, onClose, onLoaded, onUseFast, toasts, modelId }: Props) {
   const [progress, setProgress] = useState<ModelLoadProgress | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const cfg = getModelConfig(modelId);
 
   const handleLoad = async () => {
     setLoading(true);
     setError(null);
-    setProgress({ progress: 0, stage: 'بدء التحميل...', loadedMB: 0, totalMB: MODEL_CONFIG.estimatedSizeMB });
+    setProgress({ progress: 0, stage: 'بدء التحميل...', loadedMB: 0, totalMB: cfg.estimatedSizeMB });
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
-      await loadModel(setProgress);
+      await loadModel(setProgress, controller.signal, modelId);
       toasts.success('تم تحميل النموذج بنجاح');
       onLoaded();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'تعذّر تحميل النموذج';
-      setError(`تعذّر تحميل النموذج: ${msg}. تحقق من اتصال الإنترنت والمساحة المتوفرة.`);
-      toasts.error('تعذّر تحميل النموذج');
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        toasts.info('تم إلغاء تحميل النموذج');
+      } else {
+        const msg = err instanceof Error ? err.message : 'تعذّر تحميل النموذج';
+        setError(`تعذّر تحميل النموذج: ${msg}. تحقق من اتصال الإنترنت والمساحة المتوفرة.`);
+        toasts.error('تعذّر تحميل النموذج');
+      }
     } finally {
       setLoading(false);
+      abortRef.current = null;
     }
+  };
+
+  const handleCancel = () => {
+    abortRef.current?.abort();
   };
 
   return (
@@ -49,13 +63,14 @@ export function ModelLoadDialog({ open, onClose, onLoaded, onUseFast, toasts }: 
         <dl className="space-y-1">
           <div className="flex justify-between">
             <dt className="text-slate-500">النموذج:</dt>
-            <dd className="font-medium">{MODEL_CONFIG.displayName}</dd>
+            <dd className="font-medium">{cfg.displayName}</dd>
           </div>
           <div className="flex justify-between">
             <dt className="text-slate-500">الحجم التقريبي:</dt>
-            <dd>{MODEL_CONFIG.estimatedSizeMB} ميجابايت</dd>
+            <dd>{cfg.estimatedSizeMB} ميجابايت</dd>
           </div>
         </dl>
+        <p className="text-xs text-slate-500 dark:text-slate-400">{cfg.description}</p>
         <ul className="list-disc space-y-1 pr-5 text-slate-600 dark:text-slate-300">
           <li>التحميل يحدث مرة واحدة غالبًا ويُخزّن داخل المتصفح.</li>
           <li>المحادثة لن تُرسل إلى الإنترنت.</li>
@@ -74,6 +89,11 @@ export function ModelLoadDialog({ open, onClose, onLoaded, onUseFast, toasts }: 
                 style={{ width: `${progress.progress}%` }}
               />
             </div>
+            {loading && (
+              <div className="mt-2 text-left">
+                <Button variant="ghost" size="sm" onClick={handleCancel}>إلغاء التحميل</Button>
+              </div>
+            )}
           </div>
         )}
 
@@ -84,7 +104,7 @@ export function ModelLoadDialog({ open, onClose, onLoaded, onUseFast, toasts }: 
         )}
 
         <div className="border-t border-slate-200 pt-3 dark:border-slate-700">
-          <Button variant="ghost" size="sm" onClick={onUseFast}>
+          <Button variant="ghost" size="sm" onClick={onUseFast} disabled={loading}>
             استخدام الوضع السريع بدلًا من ذلك
           </Button>
         </div>

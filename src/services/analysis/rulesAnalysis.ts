@@ -178,19 +178,21 @@ function extractTasks(
     if (m.isSystemMessage) continue;
     if (!containsAny(m.content, TASK_KEYWORDS)) continue;
     const confidence = confidenceForKeywords(m.content, TASK_KEYWORDS);
+    // نُطبّع النص مرة واحدة لكل المقارنات (اتساقًا مع containsAny/confidenceForKeywords)
+    const normalizedContent = normalizeArabic(m.content);
     // تحديد ما إذا كانت موجهة للمستخدم الحالي
     const mentionsUser =
       normalizedUser.length > 0 &&
-      normalizeArabic(m.content).includes(normalizeArabic(currentUserName));
+      normalizedContent.includes(normalizeArabic(currentUserName));
     const fromOtherToUser =
       normalizedUser.length > 0 &&
       m.sender !== null &&
       m.sender.toLowerCase() !== normalizedUser &&
       (mentionsUser ||
-        m.content.includes('منك') ||
-        m.content.includes('عليك') ||
-        m.content.includes('ممكن ترسل') ||
-        m.content.includes('نحتاج منك'));
+        normalizedContent.includes(normalizeArabic('منك')) ||
+        normalizedContent.includes(normalizeArabic('عليك')) ||
+        normalizedContent.includes(normalizeArabic('ممكن ترسل')) ||
+        normalizedContent.includes(normalizeArabic('نحتاج منك')));
     const isForCurrentUser =
       normalizedUser.length > 0 &&
       (mentionsUser || fromOtherToUser);

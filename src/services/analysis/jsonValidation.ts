@@ -90,14 +90,57 @@ export function extractJsonFromText(raw: string): string | null {
 }
 
 /**
+ * يزيل تعليقات // السطرية من JSON مع احترام القيم النصية.
+ * لا يحذف `//` داخل السلاسل النصية (مثل روابط `https://...`).
+ */
+function stripLineComments(jsonStr: string): string {
+  let result = '';
+  let i = 0;
+  let inString = false;
+  let escape = false;
+  while (i < jsonStr.length) {
+    const ch = jsonStr[i];
+    if (inString) {
+      result += ch;
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      i++;
+      continue;
+    }
+    // خارج سلسلة نصية
+    if (ch === '"') {
+      inString = true;
+      result += ch;
+      i++;
+      continue;
+    }
+    // تعليق // سطري — احذف حتى نهاية السطر
+    if (ch === '/' && jsonStr[i + 1] === '/') {
+      while (i < jsonStr.length && jsonStr[i] !== '\n' && jsonStr[i] !== '\r') {
+        i++;
+      }
+      continue;
+    }
+    result += ch;
+    i++;
+  }
+  return result;
+}
+
+/**
  * محاولة إصلاح أخطاء JSON الشائعة (فواصل زائدة، علامات غير مغلقة).
  */
 export function tryFixJson(jsonStr: string): string {
   let s = jsonStr.trim();
   // إزالة الفواصل الزائدة قبل } أو ]
   s = s.replace(/,(\s*[}\]])/g, '$1');
-  // إزالة تعليقات // سطر
-  s = s.replace(/\/\/[^\n\r]*/g, '');
+  // إزالة تعليقات // سطر مع احترام القيم النصية (لا تُفسد روابط https://)
+  s = stripLineComments(s);
   return s;
 }
 

@@ -38,6 +38,15 @@ export async function orchestrateAnalysis(opts: OrchestrateOptions): Promise<Ana
   // المسار البرمجي الرئيسي — في worker للمحادثات الكبيرة لتفادي تجميد الواجهة
   onProgress({ progress: 50, stage: 'تحليل برمجي سريع...' });
   const result = await analyzeWithRulesAsync(messages, currentUserName, signal);
+  // إن اختار المستخدم الذكاء الاصطناعي صراحةً لكن جهازه لا يدعمه (لا WebGPU ولا نموذج محمّل)،
+  // أضف تنبيهًا واضحًا بأن اختياره تجاوز واستُخدم التحليل البرمجي بدلًا منه.
+  if (mode === 'local-ai' && !canAI) {
+    result.warnings.push(
+      'اخترت وضع الذكاء الاصطناعي المحلي، لكن جهازك/متصفحك لا يدعم WebGPU المطلوب لتشغيله. ' +
+        'تم استخدام التحليل البرمجي السريع بدلًا من ذلك. ' +
+        'لتشغيل التحليل الذكي، استخدم Chrome/Edge حديثًا على جهاز يدعم WebGPU.',
+    );
+  }
   onProgress({ progress: 100, stage: 'اكتمل' });
   return result;
 }

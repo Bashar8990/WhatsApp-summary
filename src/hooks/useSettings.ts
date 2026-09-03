@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getSetting, setSetting } from '../services/storage/indexedDB';
 import type { ProcessingMode } from '../types';
+import { DEFAULT_MODEL_ID } from '../config/model';
+
+// صيغة ترتيب التاريخ في تصدير واتساب
+// 'dmy' = يوم/شهر/سنة (الافتراضي للعربية وأوروبا)
+// 'mdy' = شهر/يوم/سنة (الولايات المتحدة)
+export type DateFormat = 'dmy' | 'mdy';
 
 export type AppSettings = {
   userName: string;
   processingMode: ProcessingMode;
   autoSave: boolean;
   theme: 'light' | 'dark';
+  dateFormat: DateFormat;
+  modelId: string;
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -14,6 +22,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   processingMode: 'auto',
   autoSave: false,
   theme: 'light',
+  dateFormat: 'dmy',
+  modelId: DEFAULT_MODEL_ID,
 };
 
 const STORAGE_KEY = 'app-settings';

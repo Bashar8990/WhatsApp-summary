@@ -3,11 +3,11 @@ import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { MODEL_CONFIG } from '../config/model';
-import { getDeviceCompatibility } from '../services/ai/deviceCheck';
+import { MODEL_OPTIONS } from '../config/model';
+import { getDeviceCompatibility, detectBrowser } from '../services/ai/deviceCheck';
 import { isModelLoaded, unloadModel } from '../services/ai/webllmService';
 import { deleteAllAnalyses } from '../services/storage/indexedDB';
-import type { AppSettings } from '../hooks/useSettings';
+import type { AppSettings, DateFormat } from '../hooks/useSettings';
 import type { ProcessingMode } from '../types';
 import type { ToastApi } from '../hooks/useToast';
 
@@ -25,8 +25,14 @@ const MODES: { value: ProcessingMode; label: string }[] = [
   { value: 'rules-only', label: 'تحليل سريع' },
 ];
 
+const DATE_FORMATS: { value: DateFormat; label: string; example: string }[] = [
+  { value: 'dmy', label: 'يوم/شهر/سنة', example: '01/09/2026 = 1 سبتمبر' },
+  { value: 'mdy', label: 'شهر/يوم/سنة', example: '01/09/2026 = 9 يناير' },
+];
+
 export function SettingsPage({ settings, update, reset, onBack, toasts }: Props) {
   const compat = getDeviceCompatibility();
+  const browser = detectBrowser();
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmDeleteModel, setConfirmDeleteModel] = useState(false);
   const [confirmDeleteData, setConfirmDeleteData] = useState(false);
@@ -101,6 +107,30 @@ export function SettingsPage({ settings, update, reset, onBack, toasts }: Props)
           </label>
         </Card>
 
+        <Card title="صيغة التاريخ">
+          <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+            واتساب يصدّر التواريخ بصيغة تعتمد على لغة جهازك. اختر الصيغة الصحيحة لتفسير التواريخ بدقة.
+          </p>
+          <div className="flex gap-2">
+            {DATE_FORMATS.map((f) => (
+              <button
+                key={f.value}
+                onClick={() => update({ dateFormat: f.value })}
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
+                  settings.dateFormat === f.value
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-slate-100 dark:bg-slate-800'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            مثال: {DATE_FORMATS.find((f) => f.value === settings.dateFormat)?.example}
+          </p>
+        </Card>
+
         <Card title="المظهر">
           <div className="flex gap-2">
             {(['light', 'dark'] as const).map((t) => (
@@ -118,14 +148,37 @@ export function SettingsPage({ settings, update, reset, onBack, toasts }: Props)
         </Card>
 
         <Card title="النموذج والجهاز">
+          <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+            اختيار النموذج
+          </label>
+          <div className="mb-3 space-y-2">
+            {MODEL_OPTIONS.map((m) => (
+              <button
+                key={m.modelId}
+                onClick={() => update({ modelId: m.modelId })}
+                className={`w-full rounded-lg p-3 text-right text-sm transition-colors ${
+                  settings.modelId === m.modelId
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-slate-100 dark:bg-slate-800'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">{m.displayName}</span>
+                  <span className="text-xs opacity-80">{m.estimatedSizeMB} ميجابايت</span>
+                </div>
+                <p className={`mt-1 text-xs ${settings.modelId === m.modelId ? 'text-emerald-50' : 'text-slate-500 dark:text-slate-400'}`}>
+                  {m.description}
+                </p>
+              </button>
+            ))}
+          </div>
+          <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+            ملاحظة: تغيير النموذج يتطلب إعادة تحميله. سيُحذف النموذج الحالي عند التغيير.
+          </p>
           <dl className="space-y-1 text-sm">
             <div className="flex justify-between">
-              <dt className="text-slate-500">النموذج:</dt>
-              <dd className="font-medium">{MODEL_CONFIG.displayName}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-slate-500">الحجم التقريبي:</dt>
-              <dd>{MODEL_CONFIG.estimatedSizeMB} ميجابايت</dd>
+              <dt className="text-slate-500">المتصفح:</dt>
+              <dd className="font-medium">{browser.name}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate-500">WebGPU:</dt>

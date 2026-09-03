@@ -26,6 +26,75 @@ export function splitConversationIntoChunks(
 }
 
 /**
+ * تقدير محافظ لعدد الـ tokens في نص.
+ * للعربية، كل token يقابل ~2-3 حرف تقريبًا (أكثر من الإنجليزية).
+ * نستخدم chars/2.5 كتقدير محافظ للنصوص العربية المختلطة.
+ */
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 2.5);
+}
+
+/**
+ * يحسب تقدير الـ tokens لرسالة واحدة بصيغة chunkToText.
+ */
+function estimateMessageTokens(m: WhatsAppMessage): number {
+  const date = m.rawDate ?? '';
+  const sender = m.sender ?? 'النظام';
+  // "${date} - ${sender}: ${content}\n"
+  return estimateTokens(`${date} - ${sender}: ${m.content}\n`);
+}
+
+/**
+ * يقسّم المحادثة إلى أجزاء بحسب ميزانية الـ tokens (لا عدد الرسائل)،
+ * مع احترام نافذة سياق النموذج، والحفاظ على ترتيب الرسائل،
+ * وإضافة تداخل بسيط بين الأجزاء (بالرسائل لا بالـ tokens).
+ *
+ * @param maxTokensForChunks ميزانية الـ tokens المتاحة لنص المحادثة فقط
+ *   (نافذة السياق ناقص الـ response tokens ناقص prompt overhead).
+ * @param overlapMessages عدد الرسائل المتداخلة بين الأجزاء.
+ * @param maxMessagesPerChunk حد أقصى لعدد الرسائل في الجزء (احتياط).
+ */
+export function splitConversationIntoChunksByTokens(
+  messages: WhatsAppMessage[],
+  maxTokensForChunks: number,
+  overlapMessages = 4,
+  maxMessagesPerChunk = 200,
+): WhatsAppMessage[][] {
+  if (messages.length === 0) return [[]];
+
+  // إن كانت المحادثة كاملة تناسب الميزانية وعدد الرسائل، أعدها كجزء واحد
+  const totalTokens = messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
+  if (totalTokens <= maxTokensForChunks && messages.length <= maxMessagesPerChunk) {
+    return [messages];
+  }
+
+  const chunks: WhatsAppMessage[][] = [];
+  let start = 0;
+  while (start < messages.length) {
+    let tokenBudget = maxTokensForChunks;
+    let end = start;
+    let count = 0;
+    // احزم رسائل ضمن الميزانية وحد الرسائل
+    while (end < messages.length && count < maxMessagesPerChunk) {
+      const t = estimateMessageTokens(messages[end]);
+      if (tokenBudget - t < 0 && end > start) break; // لا تضف رسالة تتجاوز الميزانية (وأبقِ جزءًا واحدًا على الأقل)
+      tokenBudget -= t;
+      end++;
+      count++;
+    }
+    // ضمان تقدّم: إن لم نتمكن من إضافة رسالة واحدة (رسالة أطول من الميزانية)، أضفها وحدها
+    if (end === start) {
+      end = start + 1;
+    }
+    chunks.push(messages.slice(start, end));
+    if (end >= messages.length) break;
+    // تداخل بالرسائل (لا يتجاوز بداية الجزء الحالي)
+    start = Math.max(end - overlapMessages, start + 1);
+  }
+  return chunks;
+}
+
+/**
  * يحوّل جزء من الرسائل إلى نص قابل للإرسال للنموذج.
  */
 export function chunkToText(messages: WhatsAppMessage[]): string {

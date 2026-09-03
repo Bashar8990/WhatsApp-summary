@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { SavedAnalysis } from '../../types';
+import type { SavedAnalysis, WhatsAppMessage } from '../../types';
 
 interface WhatsAppDB extends DBSchema {
   analyses: {
@@ -11,10 +11,14 @@ interface WhatsAppDB extends DBSchema {
     key: string;
     value: unknown;
   };
+  currentSession: {
+    key: string;
+    value: WhatsAppMessage[];
+  };
 }
 
 const DB_NAME = 'whatsapp-summary-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase<WhatsAppDB>> | null = null;
 
@@ -28,6 +32,9 @@ function getDB(): Promise<IDBPDatabase<WhatsAppDB>> {
         }
         if (!db.objectStoreNames.contains('settings')) {
           db.createObjectStore('settings');
+        }
+        if (!db.objectStoreNames.contains('currentSession')) {
+          db.createObjectStore('currentSession');
         }
       },
     });
@@ -76,4 +83,25 @@ export async function setSetting(key: string, value: unknown): Promise<void> {
 export async function getSetting<T>(key: string): Promise<T | undefined> {
   const db = await getDB();
   return (await db.get('settings', key)) as T | undefined;
+}
+
+// --- تخزين الرسائل الأصلية للجلسة الحالية في IndexedDB ---
+// sessionStorage يتجاوز سعته (~5MB) بسرعة للمحادثات الكبيرة،
+// بينما IndexedDB يتسع لكميات أكبر بكثير.
+
+const CURRENT_SESSION_MESSAGES_KEY = 'current-messages';
+
+export async function saveCurrentSessionMessages(messages: WhatsAppMessage[]): Promise<void> {
+  const db = await getDB();
+  await db.put('currentSession', messages, CURRENT_SESSION_MESSAGES_KEY);
+}
+
+export async function loadCurrentSessionMessages(): Promise<WhatsAppMessage[] | undefined> {
+  const db = await getDB();
+  return db.get('currentSession', CURRENT_SESSION_MESSAGES_KEY);
+}
+
+export async function clearCurrentSessionMessages(): Promise<void> {
+  const db = await getDB();
+  await db.delete('currentSession', CURRENT_SESSION_MESSAGES_KEY);
 }
