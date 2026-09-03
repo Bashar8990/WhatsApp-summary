@@ -1,5 +1,5 @@
 import type { AnalysisResult, ProcessingMode, WhatsAppMessage } from '../../types';
-import { analyzeWithRules } from './rulesAnalysis';
+import { analyzeWithRulesAsync } from './rulesWorkerClient';
 import { analyzeWithAI, isModelLoaded, type AnalyzeProgress } from '../ai/webllmService';
 import { getDeviceCompatibility } from '../ai/deviceCheck';
 
@@ -24,15 +24,20 @@ export async function orchestrateAnalysis(opts: OrchestrateOptions): Promise<Ana
       return await analyzeWithAI(messages, currentUserName, onProgress, summaryLength, signal);
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') throw err;
-      // احتياط للتحليل البرمجي
-      const fallback = analyzeWithRules(messages, currentUserName);
+      // احتياط للتحليل البرمجي (في worker للمحادثات الكبيرة)
+      onProgress({ progress: 90, stage: 'تحليل برمجي سريع (احتياطي)...' });
+      const fallback = await analyzeWithRulesAsync(messages, currentUserName, signal);
       fallback.warnings.push(
         'تعذّر تشغيل التحليل الذكي، تم استخدام التحليل البرمجي السريع بدلًا من ذلك.',
       );
+      onProgress({ progress: 100, stage: 'اكتمل' });
       return fallback;
     }
   }
 
-  onProgress({ progress: 100, stage: 'تحليل برمجي سريع...' });
-  return analyzeWithRules(messages, currentUserName);
+  // المسار البرمجي الرئيسي — في worker للمحادثات الكبيرة لتفادي تجميد الواجهة
+  onProgress({ progress: 50, stage: 'تحليل برمجي سريع...' });
+  const result = await analyzeWithRulesAsync(messages, currentUserName, signal);
+  onProgress({ progress: 100, stage: 'اكتمل' });
+  return result;
 }

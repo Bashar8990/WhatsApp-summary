@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
+import { Icon } from '../components/Icon';
 import { Logo } from '../components/Logo';
 import { estimateMessageCount } from '../services/parser/whatsappParser';
 import type { AnalysisType, ProcessingMode } from '../types';
@@ -99,8 +100,9 @@ export function HomePage({
         <p className="mt-2 max-w-xl text-slate-600 dark:text-slate-300">
           الصق محادثتك واستخرج المهام والمواعيد والقرارات والملخص، محليًا داخل جهازك.
         </p>
-        <div className="mt-3 rounded-full bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-          🔒 محادثتك لا تغادر جهازك
+        <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+          <Icon name="lock" size={16} title="خصوصية" />
+          محادثتك لا تغادر جهازك
         </div>
       </header>
 

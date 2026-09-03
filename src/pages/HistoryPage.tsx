@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
+import { EmptyState } from '../components/EmptyState';
+import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { deleteAllAnalyses, deleteAnalysis, getAllAnalyses } from '../services/storage/indexedDB';
 import type { SavedAnalysis } from '../types';
@@ -50,11 +52,12 @@ export function HistoryPage({ onOpen, onBack, toasts }: Props) {
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-2xl font-bold">السجل المحلي</h2>
         <Button variant="ghost" size="sm" onClick={onBack}>
-          ← رجوع
+          <Icon name="arrow-right" size={16} /> رجوع
         </Button>
       </div>
-      <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
-        🔒 البيانات محفوظة على جهازك فقط داخل متصفحك.
+      <p className="mb-4 flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400">
+        <Icon name="lock" size={16} title="خصوصية" className="shrink-0 text-emerald-600 dark:text-emerald-400" />
+        البيانات محفوظة على جهازك فقط داخل متصفحك.
       </p>
 
       <div className="mb-4 flex gap-2">
@@ -77,7 +80,12 @@ export function HistoryPage({ onOpen, onBack, toasts }: Props) {
 
       {items.length === 0 ? (
         <Card>
-          <p className="py-6 text-center text-slate-400">لا توجد تحليلات محفوظة بعد.</p>
+          <EmptyState
+            icon="history"
+            title={query.trim() ? 'لا توجد نتائج مطابقة' : 'لا توجد تحليلات محفوظة بعد'}
+            description={query.trim() ? 'جرّب كلمات بحث مختلفة أو امسح البحث.' : 'ابدأ بتحليل محادثة جديدة، ثم احفظ النتيجة لتجدها هنا.'}
+            action={query.trim() ? { label: 'مسح البحث', onClick: () => setQuery('') } : undefined}
+          />
         </Card>
       ) : (
         <ul className="space-y-2">

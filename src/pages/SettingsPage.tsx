@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
+import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { MODEL_CONFIG } from '../config/model';
 import { getDeviceCompatibility } from '../services/ai/deviceCheck';
@@ -53,7 +54,7 @@ export function SettingsPage({ settings, update, reset, onBack, toasts }: Props)
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-2xl font-bold">الإعدادات</h2>
         <Button variant="ghost" size="sm" onClick={onBack}>
-          ← رجوع
+          <Icon name="arrow-right" size={16} /> رجوع
         </Button>
       </div>
 
@@ -128,7 +129,19 @@ export function SettingsPage({ settings, update, reset, onBack, toasts }: Props)
             </div>
             <div className="flex justify-between">
               <dt className="text-slate-500">WebGPU:</dt>
-              <dd>{compat.webgpu ? 'متوفر ✓' : 'غير متوفر ✗'}</dd>
+              <dd className="flex items-center gap-1">
+                {compat.webgpu ? (
+                  <>
+                    <span>متوفر</span>
+                    <Icon name="check" size={16} className="text-emerald-600 dark:text-emerald-400" />
+                  </>
+                ) : (
+                  <>
+                    <span>غير متوفر</span>
+                    <Icon name="x" size={16} className="text-red-600 dark:text-red-400" />
+                  </>
+                )}
+              </dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate-500">الذاكرة التقريبية:</dt>

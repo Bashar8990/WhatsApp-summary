@@ -1,8 +1,15 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { Button } from './components/Button';
+import { Icon, type IconName } from './components/Icon';
+import { LoadingScreen } from './components/LoadingScreen';
+import { Logo } from './components/Logo';
 import { ModelLoadDialog } from './components/ModelLoadDialog';
+import { OfflineBanner } from './components/OfflineBanner';
+import { ResultsSkeleton } from './components/Skeleton';
 import { ToastContainer } from './components/Toast';
+import { useHashRoute, type Page } from './hooks/useHashRoute';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useSettings } from './hooks/useSettings';
 import { useTheme, useToasts } from './hooks/useToast';
 import { HomePage } from './pages/HomePage';
@@ -14,20 +21,70 @@ import { orchestrateAnalysis } from './services/analysis/orchestrator';
 import { parseWhatsAppChat } from './services/parser/whatsappParser';
 import { getDeviceCompatibility } from './services/ai/deviceCheck';
 import { isModelLoaded, regenerateSummary } from './services/ai/webllmService';
-import { saveAnalysis } from './services/storage/indexedDB';
+import { getAnalysis, saveAnalysis } from './services/storage/indexedDB';
 import { makeTitle } from './utils/export';
-import type { AnalysisResult, AnalysisType, SavedAnalysis, SummaryLength } from './types';
+import type { AnalysisResult, AnalysisType, SavedAnalysis, SummaryLength, WhatsAppMessage } from './types';
 
-type Page = 'home' | 'results' | 'history' | 'settings' | 'privacy';
+// مفاتيح sessionStorage لحفظ النتيجة الحالية (تبقى صفحة Results بعد التحديث)
+const SESSION_RESULT_KEY = 'current-result';
+const SESSION_MSG_COUNT_KEY = 'current-message-count';
+const SESSION_MESSAGES_KEY = 'current-messages';
+
+function storeCurrentResult(result: AnalysisResult, messageCount: number, messages?: WhatsAppMessage[]) {
+  try {
+    sessionStorage.setItem(SESSION_RESULT_KEY, JSON.stringify(result));
+    sessionStorage.setItem(SESSION_MSG_COUNT_KEY, String(messageCount));
+    // حفظ الرسائل الأصلية لإتاحة إعادة توليد الملخص بعد التحديث
+    // (قد تتجاوز السعة للمحادثات الضخمة — يُتجاهل بصمت)
+    if (messages) {
+      sessionStorage.setItem(SESSION_MESSAGES_KEY, JSON.stringify(messages));
+    } else {
+      sessionStorage.removeItem(SESSION_MESSAGES_KEY);
+    }
+  } catch {
+    /* ignore — قد تتجاوز السعة */
+  }
+}
+
+function clearCurrentResult() {
+  try {
+    sessionStorage.removeItem(SESSION_RESULT_KEY);
+    sessionStorage.removeItem(SESSION_MSG_COUNT_KEY);
+    sessionStorage.removeItem(SESSION_MESSAGES_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadCurrentResult(): { result: AnalysisResult; messageCount: number; messages: WhatsAppMessage[] } | null {
+  try {
+    const r = sessionStorage.getItem(SESSION_RESULT_KEY);
+    const m = sessionStorage.getItem(SESSION_MSG_COUNT_KEY);
+    const msgs = sessionStorage.getItem(SESSION_MESSAGES_KEY);
+    if (r && m) {
+      return {
+        result: JSON.parse(r) as AnalysisResult,
+        messageCount: parseInt(m, 10),
+        messages: msgs ? (JSON.parse(msgs) as WhatsAppMessage[]) : [],
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
 
 export default function App() {
   const { settings, update, reset, loaded } = useSettings();
   const toasts = useToasts();
   useTheme(settings.theme);
+  const { route, navigate } = useHashRoute();
 
-  const [page, setPage] = useState<Page>('home');
-  const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [messageCount, setMessageCount] = useState(0);
+  // استعادة النتيجة من sessionStorage عند بدء التشغيل (لإبقاء Results بعد التحديث)
+  const [result, setResult] = useState<AnalysisResult | null>(() => loadCurrentResult()?.result ?? null);
+  const [messageCount, setMessageCount] = useState<number>(() => loadCurrentResult()?.messageCount ?? 0);
+  // الرسائل الأصلية المُحلّلة — تُحفظ لإتاحة إعادة توليد الملخص من المحادثة (لا من الملخص)
+  const [messages, setMessages] = useState<WhatsAppMessage[]>(() => loadCurrentResult()?.messages ?? []);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ progress: number; stage: string } | null>(null);
   const [showModelDialog, setShowModelDialog] = useState(false);
@@ -37,6 +94,7 @@ export default function App() {
     summaryLength: SummaryLength;
   } | null>(null);
   const [confirmSave, setConfirmSave] = useState(false);
+  const [loadingSaved, setLoadingSaved] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   // PWA update prompt
@@ -51,6 +109,30 @@ export default function App() {
   });
 
   const compat = getDeviceCompatibility();
+  const online = useOnlineStatus();
+
+  // تحميل نتيجة محفوظة بالـ ID عند فتح #/results/:id (deep link)
+  useEffect(() => {
+    if (route.page === 'results' && route.params.id) {
+      // إن كانت النتيجة الحالية لا تطابق الـ ID المطلوب، حمّلها من IndexedDB
+      setLoadingSaved(true);
+      void (async () => {
+        const saved = await getAnalysis(route.params.id!);
+        if (saved) {
+          setResult(saved.result);
+          setMessageCount(saved.messageCount);
+          // الرسائل الأصلية غير متوفرة للنتائج المحفوظة
+          setMessages([]);
+          storeCurrentResult(saved.result, saved.messageCount, undefined);
+        } else {
+          toasts.error('لم يتم العثور على النتيجة المطلوبة');
+          navigate('home');
+        }
+        setLoadingSaved(false);
+      })();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.page, route.params.id]);
 
   const runAnalysis = useCallback(
     async (text: string, type: AnalysisType, summaryLength: SummaryLength) => {
@@ -90,8 +172,12 @@ export default function App() {
           onProgress: (p) => setProgress(p),
           signal: controller.signal,
         });
-        setResult(filterByType(res, type));
-        setPage('results');
+        const filtered = filterByType(res, type);
+        setResult(filtered);
+        setMessageCount(parsed.messages.length);
+        setMessages(parsed.messages);
+        storeCurrentResult(filtered, parsed.messages.length, parsed.messages);
+        navigate('results');
         if (settings.autoSave) {
           await persistResult(res, parsed.messages.length, settings.userName);
         }
@@ -107,7 +193,7 @@ export default function App() {
         abortRef.current = null;
       }
     },
-    [settings, compat, toasts],
+    [settings, compat, toasts, navigate],
   );
 
   const handleModelLoaded = async () => {
@@ -144,7 +230,9 @@ export default function App() {
   const handleClear = () => {
     setResult(null);
     setMessageCount(0);
-    setPage('home');
+    setMessages([]);
+    clearCurrentResult();
+    navigate('home');
   };
 
   const handleCancel = () => {
@@ -153,10 +241,15 @@ export default function App() {
 
   const handleRegenerate = async (length: SummaryLength): Promise<string> => {
     if (!result) return '';
+    // إعادة التوليد تتطلب الرسائل الأصلية (لا الملخص) لإنتاج ملخص من المحادثة نفسها
+    if (messages.length === 0) {
+      toasts.warning('لا تتوفر المحادثة الأصلية لإعادة التوليد. افتح نتيجة من تحليل جديد.');
+      return result.summary;
+    }
     if (isModelLoaded()) {
       try {
         const newSummary = await regenerateSummary(
-          [{ id: 'x', sender: null, timestamp: null, rawDate: null, content: result.summary, isSystemMessage: false }],
+          messages,
           settings.userName,
           length,
         );
@@ -171,26 +264,58 @@ export default function App() {
   const openSaved = (a: SavedAnalysis) => {
     setResult(a.result);
     setMessageCount(a.messageCount);
-    setPage('results');
+    // الرسائل الأصلية غير متوفرة للنتائج المحفوظة (لا تُخزّن في IndexedDB)
+    // لذا ستُعطّل إعادة التوليد لهذه النتيجة
+    setMessages([]);
+    storeCurrentResult(a.result, a.messageCount, undefined);
+    // تنقّل مع ID لإتاحة مشاركة الرابط والرجوع
+    navigate('results', { id: a.id });
   };
 
   if (!loaded) {
-    return <div className="p-10 text-center text-slate-500">جاري التحميل...</div>;
+    return <LoadingScreen />;
   }
+
+  // إن كان المسار results لكن لا توجد نتيجة، عُد للرئيسية
+  const showResults = route.page === 'results' && result !== null;
+
+  // قائمة عناصر التنقل الموحّدة (تُستخدم في الـ nav العلوي والـ bottom nav)
+  const navItems: { page: Page; label: string; icon: IconName }[] = [
+    { page: 'home', label: 'الرئيسية', icon: 'chat' },
+    { page: 'history', label: 'السجل', icon: 'history' },
+    { page: 'settings', label: 'الإعدادات', icon: 'settings' },
+    { page: 'privacy', label: 'الخصوصية', icon: 'shield' },
+  ];
+
+  const toggleTheme = () => {
+    update({ theme: settings.theme === 'light' ? 'dark' : 'light' });
+  };
 
   return (
     <div className="min-h-screen">
+      <OfflineBanner online={online} />
       <nav className="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur dark:border-slate-700 dark:bg-slate-900/80">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
-          <button onClick={() => setPage('home')} className="flex items-center gap-2 font-bold text-emerald-700 dark:text-emerald-400">
-            ملخص الواتساب
+        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-2.5">
+          <button onClick={() => navigate('home')} className="flex items-center gap-2 font-bold text-emerald-700 dark:text-emerald-400">
+            <Logo size={32} />
+            <span className="hidden sm:inline">ملخص الواتساب</span>
           </button>
-          <div className="flex gap-1 text-sm">
-            <NavBtn active={page === 'home'} onClick={() => setPage('home')}>الرئيسية</NavBtn>
-            <NavBtn active={page === 'history'} onClick={() => setPage('history')}>السجل</NavBtn>
-            <NavBtn active={page === 'settings'} onClick={() => setPage('settings')}>الإعدادات</NavBtn>
-            <NavBtn active={page === 'privacy'} onClick={() => setPage('privacy')}>الخصوصية</NavBtn>
+          {/* تنقّل نصي للشاشات المتوسطة والكبيرة */}
+          <div className="hidden gap-1 text-sm sm:flex">
+            {navItems.map((item) => (
+              <NavBtn key={item.page} active={route.page === item.page} onClick={() => navigate(item.page)}>
+                {item.label}
+              </NavBtn>
+            ))}
           </div>
+          {/* زر تبديل الوضع الفاتح/الداكن — سريع في الـ nav */}
+          <button
+            onClick={toggleTheme}
+            className="rounded-lg p-2 text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+            aria-label={settings.theme === 'light' ? 'تفعيل الوضع الداكن' : 'تفعيل الوضع الفاتح'}
+          >
+            <Icon name={settings.theme === 'light' ? 'moon' : 'sun'} size={20} />
+          </button>
         </div>
       </nav>
 
@@ -209,8 +334,9 @@ export default function App() {
         </div>
       )}
 
-      <main>
-        {page === 'home' && (
+      {/* padding سفلي للجوال لتفادي تغطية المحتوى بالـ Bottom Nav */}
+      <main className="pb-20 sm:pb-0">
+        {route.page === 'home' && (
           <HomePage
             userName={settings.userName}
             onUserNameChange={(v) => update({ userName: v })}
@@ -220,26 +346,58 @@ export default function App() {
             toasts={toasts}
           />
         )}
-        {page === 'results' && result && (
+        {loadingSaved && <ResultsSkeleton />}
+        {!loadingSaved && showResults && result && (
           <ResultsPage
             result={result}
             messageCount={messageCount}
-            onBack={() => setPage('home')}
+            onBack={() => navigate('home')}
             toasts={toasts}
-            canRegenerate={isModelLoaded()}
+            canRegenerate={isModelLoaded() && messages.length > 0}
             onRegenerate={handleRegenerate}
             onSave={handleSave}
             onClear={handleClear}
           />
         )}
-        {page === 'history' && (
-          <HistoryPage onOpen={openSaved} onBack={() => setPage('home')} toasts={toasts} />
+        {route.page === 'results' && !result && !loadingSaved && (
+          <div className="mx-auto max-w-2xl px-4 py-10 text-center text-slate-500">
+            لا توجد نتيجة لعرضها. <button onClick={() => navigate('home')} className="text-emerald-600 underline">العودة للرئيسية</button>
+          </div>
         )}
-        {page === 'settings' && (
-          <SettingsPage settings={settings} update={update} reset={reset} onBack={() => setPage('home')} toasts={toasts} />
+        {route.page === 'history' && (
+          <HistoryPage onOpen={openSaved} onBack={() => navigate('home')} toasts={toasts} />
         )}
-        {page === 'privacy' && <PrivacyPage onBack={() => setPage('home')} />}
+        {route.page === 'settings' && (
+          <SettingsPage settings={settings} update={update} reset={reset} onBack={() => navigate('home')} toasts={toasts} />
+        )}
+        {route.page === 'privacy' && <PrivacyPage onBack={() => navigate('home')} />}
       </main>
+
+      {/* Bottom Navigation للجوال — أنسب لتطبيق PWA بنمط mobile-first */}
+      <nav className="fixed bottom-0 right-0 left-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 sm:hidden">
+        <div className="flex items-stretch justify-around">
+          {navItems.map((item) => {
+            const active = route.page === item.page;
+            return (
+              <button
+                key={item.page}
+                onClick={() => navigate(item.page)}
+                className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-xs font-medium transition-colors ${
+                  active ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'
+                }`}
+                aria-current={active ? 'page' : undefined}
+              >
+                <Icon name={item.icon} size={22} />
+                <span>{item.label}</span>
+                {/* active indicator — شريط علوي emerald */}
+                {active && (
+                  <span className="absolute top-0 h-0.5 w-8 rounded-full bg-emerald-600 dark:bg-emerald-400" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
 
       <ModelLoadDialog
         open={showModelDialog}
@@ -280,11 +438,18 @@ function NavBtn({ active, onClick, children }: { active: boolean; onClick: () =>
   return (
     <button
       onClick={onClick}
-      className={`rounded-lg px-3 py-1.5 font-medium transition-colors ${
-        active ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+      aria-current={active ? 'page' : undefined}
+      className={`relative rounded-lg px-3 py-1.5 font-medium transition-colors ${
+        active
+          ? 'text-emerald-700 dark:text-emerald-400'
+          : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
       }`}
     >
       {children}
+      {/* active indicator — شريط سفلي emerald */}
+      {active && (
+        <span className="absolute -bottom-2.5 right-1/2 h-1 w-6 translate-x-1/2 rounded-full bg-emerald-600 dark:bg-emerald-400" />
+      )}
     </button>
   );
 }

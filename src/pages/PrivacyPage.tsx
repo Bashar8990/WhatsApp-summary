@@ -1,4 +1,5 @@
 import { Button } from '../components/Button';
+import { Icon } from '../components/Icon';
 
 type Props = { onBack: () => void };
 
@@ -8,11 +9,14 @@ export function PrivacyPage({ onBack }: Props) {
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-2xl font-bold">الخصوصية</h2>
         <Button variant="ghost" size="sm" onClick={onBack}>
-          ← رجوع
+          <Icon name="arrow-right" size={16} /> رجوع
         </Button>
       </div>
       <div className="space-y-3 text-slate-700 dark:text-slate-300">
-        <p>🔒 التطبيق يحلل المحادثة داخل جهاز المستخدم بالكامل.</p>
+        <p className="flex items-center gap-2">
+          <Icon name="lock" size={18} title="خصوصية" className="shrink-0 text-emerald-600 dark:text-emerald-400" />
+          التطبيق يحلل المحادثة داخل جهاز المستخدم بالكامل.
+        </p>
         <ul className="list-disc space-y-2 pr-6">
           <li>لا توجد حسابات مستخدمين.</li>
           <li>لا يوجد خادم خلفي لمعالجة المحادثة.</li>
