@@ -232,13 +232,17 @@ function extractDecisions(messages: WhatsAppMessage[]): DecisionItem[] {
   return items;
 }
 
-function buildSummary(messages: WhatsAppMessage[], people: PersonItem[]): string {
+function buildSummary(
+  messages: WhatsAppMessage[],
+  people: PersonItem[],
+  dates: DateItem[],
+  tasks: TaskItem[],
+  decisions: DecisionItem[],
+): string {
   const humanMessages = messages.filter((m) => !m.isSystemMessage);
   const total = humanMessages.length;
-  const topSenders = people.slice(0, 5);
-  const sendersText = topSenders
-    .map((p) => `${p.name} (${p.messageCount} رسالة)`)
-    .join('، ');
+
+  // النطاق الزمني
   const firstDate = humanMessages[0]?.timestamp ?? null;
   const lastDate = humanMessages[humanMessages.length - 1]?.timestamp ?? null;
   let dateRange = '';
@@ -246,16 +250,105 @@ function buildSummary(messages: WhatsAppMessage[], people: PersonItem[]): string
     try {
       const f = new Date(firstDate).toLocaleDateString('ar-EG');
       const l = new Date(lastDate).toLocaleDateString('ar-EG');
-      dateRange = ` بين ${f} و ${l}`;
+      dateRange = f === l ? ` في ${f}` : ` بين ${f} و ${l}`;
     } catch {
       dateRange = '';
     }
   }
-  return (
-    `تحليل برمجي تقريبي لمحادثة من ${total} رسالة${dateRange}. ` +
-    `أكثر المشاركين: ${sendersText || 'غير محدد'}. ` +
-    `هذا ملخص مبدئي يعتمد على القواعد، وللحصول على ملخص أدق استخدم التحليل الذكي المحلي.`
+
+  const parts: string[] = [];
+
+  // 1) مقدمة موجزة
+  const topSenders = people.slice(0, 3);
+  const sendersText = topSenders.map((p) => p.name).join(' و');
+  parts.push(
+    `محادثة بين ${sendersText || 'مشاركين'}${dateRange}، تتضمن ${total} رسالة.`,
   );
+
+  // 2) المواضيع الرئيسية — استخراج أبرز الكلمات المفتاحية
+  const topics = extractTopics(humanMessages);
+  if (topics.length > 0) {
+    parts.push(`المواضيع الرئيسية: ${topics.join('، ')}.`);
+  }
+
+  // 3) القرارات
+  if (decisions.length > 0) {
+    const top = decisions.slice(0, 3);
+    const decisionsText = top
+      .map((d) => d.decision.length > 80 ? d.decision.slice(0, 80) + '…' : d.decision)
+      .join('؛ ');
+    parts.push(
+      `القرارات: ${decisionsText}${decisions.length > 3 ? ` (${decisions.length} قرار إجمالًا)` : ''}.`,
+    );
+  }
+
+  // 4) المهام
+  if (tasks.length > 0) {
+    const top = tasks.slice(0, 3);
+    const tasksText = top
+      .map((t) => t.task.length > 80 ? t.task.slice(0, 80) + '…' : t.task)
+      .join('؛ ');
+    parts.push(
+      `المهام: ${tasksText}${tasks.length > 3 ? ` (${tasks.length} مهمة إجمالًا)` : ''}.`,
+    );
+  }
+
+  // 5) المواعيد
+  if (dates.length > 0) {
+    const top = dates.slice(0, 3);
+    const datesText = top
+      .map((d) => d.event.length > 60 ? d.event.slice(0, 60) + '…' : d.event)
+      .join('؛ ');
+    parts.push(
+      `المواعيد المرتبطة: ${datesText}${dates.length > 3 ? ` (${dates.length} موعد إجمالًا)` : ''}.`,
+    );
+  }
+
+  // 6) خاتمة
+  parts.push(
+    'هذا ملخص برمجي يعتمد على مطابقة الكلمات المفتاحية. للحصول على ملخص أعمق وأكثر دقة، استخدم التحليل الذكي المحلي.',
+  );
+
+  return parts.join(' ');
+}
+
+// يستخرج المواضيع الرئيسية من المحادثة عبر إيجاد الكلمات المتكررة المفيدة
+function extractTopics(messages: WhatsAppMessage[]): string[] {
+  // كلمات وقف شائعة لا تفيد كموضوع
+  const STOP_WORDS = new Set([
+    'في', 'من', 'على', 'الى', 'إلى', 'هذا', 'هذه', 'ذلك', 'التي', 'الذي', 'كان',
+    'مع', 'عن', 'او', 'أو', 'ثم', 'لكن', 'ان', 'أن', 'لا', 'ما', 'هو', 'هي',
+    'نعم', 'لا', 'حسن', 'حسنا', 'تمام', 'اوكي', 'ok', 'yes', 'no',
+    'السلام', 'عليكم', 'ورحمة', 'الله', 'بركاته', 'شكرا', 'شكراً',
+    'انا', 'أنا', 'انت', 'أنت', 'نحن', 'هم', 'هو', 'هي',
+    'اليوم', 'غدا', 'غدًا', 'بكرة', 'بكره', 'الان', 'الآن', 'بعد',
+    'قبل', 'كل', 'بعض', 'عند', 'لدي', 'عندي', 'عندك', 'عندك',
+    'اي', 'أي', 'كيف', 'متى', 'وين', 'وينك', 'ليش', 'وش',
+    'ال', 'ه', 'ي', 'ه', 'ك', 'ت', 'ون', 'ين', 'ات', 'ه', 'ة',
+  ]);
+
+  const wordCounts = new Map<string, number>();
+  for (const m of messages) {
+    // تقسيم إلى كلمات (عربية + إنجليزية)
+    const words = m.content
+      .replace(/[^\u0600-\u06FFa-zA-Z\s]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 4 && !STOP_WORDS.has(w.toLowerCase()));
+    for (const w of words) {
+      const normalized = normalizeArabic(w);
+      if (normalized.length < 4) continue;
+      wordCounts.set(normalized, (wordCounts.get(normalized) ?? 0) + 1);
+    }
+  }
+
+  // أخذ أكثر 5 كلمات تكرارًا (مع حد أدنى للتكرار)
+  const sorted = [...wordCounts.entries()]
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([word]) => word);
+
+  return sorted;
 }
 
 export function analyzeWithRules(
@@ -266,7 +359,7 @@ export function analyzeWithRules(
   const dates = extractDates(messages);
   const { tasksForMe, allTasks } = extractTasks(messages, currentUserName);
   const decisions = extractDecisions(messages);
-  const summary = buildSummary(messages, people);
+  const summary = buildSummary(messages, people, dates, allTasks, decisions);
   const warnings: string[] = [
     'هذه النتائج تقريبية وتعتمد على قواعد برمجية. قد تحتوي على إيجابيات/سلبيات كاذبة.',
   ];
